@@ -20,7 +20,7 @@
 	],
 	"dependencies": {
 		"chokidar": "3.5.1",
-		"express": "4.17.1",
+		"express": "4.17.3",
 		"express-ws": "4.0.0",
 		"fs-extra": "8.1.0"
 	},
