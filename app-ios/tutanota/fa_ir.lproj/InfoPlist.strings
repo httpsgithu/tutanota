@@ -1,5 +1,5 @@
 NSCameraUsageDescription = "یک عکس یا ویدیو برای اضافه کردن به عنوان پیوست بگیرید.";
-NSPhotoLibraryUsageDescription = "یک عکس از کتابخانۀ آلبومتان  پیوست کنید";
+NSPhotoLibraryUsageDescription = "یک عکس از کتابخانه‌تان پیوست کنید.";
 NSMicrophoneUsageDescription = "هنگام ضبط ویدیو به عنوان پیوست، استفاده می‌شود.";
 NSContactsUsageDescription = "نشانی ایمیل گیرنده را در مخاطبان پیدا کنید.";
 NSRemindersUsageDescription = "اگر ایمیل تازه‌ای دریافت کنید،  اعلان نمایش می‌دهد";
@@ -10,3 +10,8 @@ TutaoChangePermissionMsg = "برای دادن دسترسی شما باید مج�
 TutaoCancelAction = "لغو";
 TutaoSettingsAction = "تنظیمات";
 TutaoCalendarAlarmTitle = "یادآور";
+TutaoScheduleAlarmError = "تنظیم کردن زنگ هشدار موفقیت‌آمیز نبود. لطفا اپلیکیشن را به روز کنید.";
+TutaoUnlockCredentialsAction = "باز کردن قفل داده‌های هویتی";
+TutaoPushNewMail = "ایمیل جدیدی رسید.";
+TutaoDeleteAction = "حذف";
+TutaoMarkReadAction = "علامت‌گذاری به عنوان خوانده شده";

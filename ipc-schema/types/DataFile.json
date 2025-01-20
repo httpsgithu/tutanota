@@ -1,0 +1,7 @@
+{
+	"name": "DataFile",
+	"type": "typeref",
+	"location": {
+		"typescript": "../src/common/api/common/DataFile.js"
+	}
+}

@@ -1,76 +1,86 @@
-import {babelDesktopPlugins, resolveLibs} from "./RollupConfig.js"
-import {nativeDepWorkaroundPlugin, pluginNativeLoader} from "./RollupPlugins.js"
+import { resolveLibs } from "./RollupConfig.js"
 import nodeResolve from "@rollup/plugin-node-resolve"
-import fs from "fs"
-import path from "path"
-import {rollup} from "rollup"
-import {terser} from "rollup-plugin-terser"
-import pluginBabel from "@rollup/plugin-babel"
-import commonjs from "@rollup/plugin-commonjs"
+import fs from "node:fs"
+import path, { dirname } from "node:path"
+import { rollup } from "rollup"
+import terser from "@rollup/plugin-terser"
 import electronBuilder from "electron-builder"
-import generatePackgeJson from "./electron-package-json-template.js"
-import {create as createEnv, preludeEnvPlugin} from "./env.js"
-import cp from 'child_process'
-import util from 'util'
+import generatePackageJson from "./electron-package-json-template.js"
+import { create as createEnv, preludeEnvPlugin } from "./env.js"
+import cp from "node:child_process"
+import util from "node:util"
+import typescript from "@rollup/plugin-typescript"
+import { fileURLToPath } from "node:url"
+import { getCanonicalPlatformName } from "./buildUtils.js"
+import { domainConfigs } from "./DomainConfigs.js"
+import commonjs from "@rollup/plugin-commonjs"
+import { nodeGypPlugin } from "./nodeGypPlugin.js"
+import { napiPlugin } from "./napiPlugin.js"
 
-const {babel} = pluginBabel
 const exec = util.promisify(cp.exec)
+const buildSrc = dirname(fileURLToPath(import.meta.url))
+const projectRoot = path.resolve(path.join(buildSrc, ".."))
 
-export async function buildDesktop({
-	                                   dirname, // directory this was called from
-	                                   version, // application version that gets built
-	                                   targets, // which desktop targets to build and how to package them
-	                                   updateUrl, // where the client should pull its updates from, if any
-	                                   nameSuffix, // suffix used to distinguish test-, prod- or snapshot builds on the same machine
-	                                   notarize, // for the MacOs notarization feature
-	                                   outDir, // where copy the finished artifacts
-	                                   unpacked, // output desktop client without packing it into an installer
-                                   }) {
+/**
+ * @param dirname directory this was called from
+ * @param version application version that gets built
+ * @param platform {"linux"|"win32"|"darwin"} - Canonical platform name of the desktop target to be built
+ * @param architecture {"arm64"|"x64"|"universal"} the instruction set used in the built desktop binary
+ * @param updateUrl where the client should pull its updates from, if any
+ * @param nameSuffix suffix used to distinguish test-, prod- or snapshot builds on the same machine
+ * @param notarize {boolean} for the macOS notarization feature
+ * @param outDir where copy the finished artifacts
+ * @param unpacked output desktop client without packing it into an installer
+ * @param [disableMinify] {boolean} whether to disible code minified
+ * @returns {Promise<void>}
+ */
+export async function buildDesktop({ dirname, version, platform, architecture, updateUrl, nameSuffix, notarize, outDir, unpacked, disableMinify }) {
 	// The idea is that we
-	// - build desktop code into build/dist/desktop
+	// - build desktop code into build/desktop
 	// - package the whole dist directory into the app
 	// - move installers out of the dist into build/desktop-whatever
 	// - cleanup dist directory
 	// It's messy
-	const targetString = Object.keys(targets)
-	                           .filter(k => typeof targets[k] !== "undefined")
-	                           .join(" ")
-	console.log("Building desktop client for v" + version + " (" + targetString + ")...")
-	const updateSubDir = "desktop" + nameSuffix
-	const distDir = path.join(dirname, "build", "dist")
-	outDir = path.join(outDir || path.join(distDir, ".."), updateSubDir)
-	await fs.promises.mkdir(outDir, {recursive: true})
 
+	console.log(`Building ${architecture} ${platform} desktop client for v${version}`)
+	updateUrl = updateUrl?.toString()
+	const updateSubDir = `desktop${nameSuffix}`
+	const distDir = path.join(dirname, "build")
+
+	// this prevents us from outputting artifacts into the "desktop" build folder that contains the desktop clients js files that get bundled
+	outDir = path.join(outDir ?? distDir, "..", "artifacts", updateSubDir)
+	await fs.promises.rm(outDir, { recursive: true, force: true })
+	await fs.promises.mkdir(outDir, { recursive: true })
 
 	// We need to get the right build of native dependencies. There's a tool called node-gyp which can build for different architectures
 	// and downloads everything it needs. Usually dependencies build themselves in post-install script.
-	// Currently we have keytar which avoids building itself if possible and only build
+	// Currently we have sqlite which avoids building itself if possible and only build
 	console.log("Updating electron-builder config...")
-	const content = generatePackgeJson({
+	const content = await generatePackageJson({
 		nameSuffix,
 		version,
 		updateUrl,
-		iconPath: path.join(dirname, "/resources/desktop-icons/logo-solo-red.png"),
+		iconPath: path.join(dirname, "/resources/desktop-icons/logo-solo-red.png" + (platform === "win32" ? ".ico" : "")),
 		notarize,
 		unpacked,
-		sign: (process.env.DEBUG_SIGN && updateUrl !== "") || !!process.env.JENKINS,
+		sign: (process.env.DEBUG_SIGN && updateUrl !== "") || !!process.env.JENKINS_HOME,
+		architecture,
 	})
 	console.log("updateUrl is", updateUrl)
-	await fs.promises.writeFile("./build/dist/package.json", JSON.stringify(content), 'utf-8')
-	if (targets["win32"] != null) await getMapirs(distDir)
-
-	await maybeGetKeytar(targets)
+	await fs.promises.writeFile("./build/package.json", JSON.stringify(content), "utf-8")
+	if (platform === "win32") await getMapirs(distDir)
 
 	// prepare files
 	try {
-		await fs.promises.rm(path.join(distDir, "..", updateSubDir), {recursive: true})
+		await fs.promises.rm(path.join(distDir, updateSubDir), { recursive: true })
 	} catch (e) {
-		if (e.code !== 'ENOENT') {
+		if (e.code !== "ENOENT") {
 			throw e
 		}
 	}
+
 	console.log("Bundling desktop client")
-	await rollupDesktop(dirname, path.join(distDir, "desktop"), version)
+	await rollupDesktop(dirname, path.join(distDir, "desktop"), version, platform, architecture, disableMinify)
 
 	console.log("Starting installer build...")
 	if (process.platform.startsWith("darwin")) {
@@ -84,83 +94,71 @@ export async function buildDesktop({
 
 	// package for linux, win, mac
 	await electronBuilder.build({
-		_: ['build'],
-		win: targets.win32,
-		mac: targets.mac,
-		linux: targets.linux,
-		publish: 'always',
-		project: distDir
+		// @ts-ignore this is the argument to the cli but it's not in ts types?
+		_: ["build"],
+		win: platform === "win32" ? [] : undefined,
+		mac: platform === "darwin" ? [] : undefined,
+		linux: platform === "linux" ? [] : undefined,
+		publish: "always",
+		project: distDir,
 	})
 	console.log("Move output to ", outDir)
-	await fs.promises.mkdir(outDir, {recursive: true})
 	await Promise.all(
-		fs.readdirSync(path.join(distDir, '/installers'))
-		  .filter((file => file.startsWith(content.name) || file.endsWith('.yml') || file.endsWith("-unpacked")))
-		  .map(file => fs.promises.rename(
-			  path.join(distDir, '/installers/', file),
-			  path.join(outDir, file)
-			  )
-		  )
+		fs
+			.readdirSync(path.join(distDir, "/installers"))
+			.filter((file) => file.startsWith(content.name) || file.endsWith(".yml") || file.endsWith("-unpacked"))
+			.map((file) => fs.promises.rename(path.join(distDir, "/installers/", file), path.join(outDir, file))),
 	)
 	await Promise.all([
-		fs.promises.rm(path.join(distDir, '/installers/'), {recursive: true}),
-		fs.promises.rm(path.join(distDir, '/node_modules/'), {recursive: true}),
-		fs.promises.unlink(path.join(distDir, '/package.json')),
-		fs.promises.unlink(path.join(distDir, '/package-lock.json'),),
+		fs.promises.rm(path.join(distDir, "/installers/"), { recursive: true, force: true }),
+		fs.promises.rm(path.join(distDir, "/node_modules/"), { recursive: true, force: true }),
+		fs.promises.unlink(path.join(distDir, "/package.json")),
+		fs.promises.unlink(path.join(distDir, "/package-lock.json")),
 	])
 }
 
-async function rollupDesktop(dirname, outDir, version) {
-	function babelPreset() {
-		return babel({
-			plugins: babelDesktopPlugins,
-			babelHelpers: "bundled",
-		})
-	}
-
+async function rollupDesktop(dirname, outDir, version, platform, architecture, disableMinify) {
+	platform = getCanonicalPlatformName(platform)
 	const mainBundle = await rollup({
-		input: path.join(dirname, "src/desktop/DesktopMain.js"),
+		input: [path.join(dirname, "src/common/desktop/DesktopMain.ts"), path.join(dirname, "src/common/desktop/sqlworker.ts")],
+		// some transitive dep of a transitive dev-dep requires https://www.npmjs.com/package/url
+		// which rollup for some reason won't distinguish from the node builtin.
+		external: (id, parent, isResolved) => {
+			if (parent != null && parent.endsWith("node-mimimi/dist/binding.cjs")) return true
+			if (id.endsWith(".node")) return true
+			return ["url", "util", "path", "fs", "os", "http", "https", "crypto", "child_process", "electron"].includes(id)
+		},
 		preserveEntrySignatures: false,
 		plugins: [
-			babelPreset(),
-			resolveLibs(),
-			nativeDepWorkaroundPlugin(),
-			pluginNativeLoader(),
-			nodeResolve({preferBuiltins: true}),
-			// requireReturnsDefault: "preferred" is needed in order to correclty generate a wrapper for the native keytar module
-			commonjs({
-				exclude: "src/**",
-				requireReturnsDefault: "preferred",
+			nodeGypPlugin({
+				rootDir: projectRoot,
+				platform,
+				architecture,
+				nodeModule: "better-sqlite3",
+				environment: "electron",
 			}),
-			terser(),
-			preludeEnvPlugin(createEnv({staticUrl: null, version, mode: "Desktop", dist: true}))
-		]
+			napiPlugin({
+				platform,
+				architecture,
+				nodeModule: "@tutao/node-mimimi",
+			}),
+			typescript({
+				tsconfig: "tsconfig.json",
+				outDir,
+			}),
+			resolveLibs(),
+			nodeResolve({
+				preferBuiltins: true,
+				resolveOnly: [/^@tutao\/.*$/],
+			}),
+			commonjs(),
+			disableMinify ? undefined : terser(),
+			preludeEnvPlugin(createEnv({ staticUrl: null, version, mode: "Desktop", dist: true, domainConfigs })),
+		],
 	})
-	await mainBundle.write({sourcemap: true, format: "commonjs", dir: outDir})
-	await fs.promises.copyFile(path.join(dirname, "src/desktop/preload.js"), path.join(outDir, "preload.js"))
-}
-
-/**
- * we can't cross-compile keytar, so we need to have the prebuilt version
- * when building a desktop client for windows on linux
- *
- * napiVersion is the N-API version that's used by keytar.
- * the current release artifacts on github are namend accordingly,
- * e.g. keytar-v7.7.0-napi-v3-linux-x64.tar.gz for N-API v3
- */
-async function maybeGetKeytar(targets, napiVersion = 3) {
-	const target = Object.keys(targets)
-	                  .filter(t => targets[t] != null)
-	                  .filter(t => t !== process.platform)
-	if (target.length === 0 || process.env.JENKINS) return
-	console.log("fetching prebuilt keytar for", target, "N-API", napiVersion)
-	return Promise.all(target.map(t => exec(
-		`npx prebuild-install --platform ${t} --target ${napiVersion} --tag-prefix v --runtime napi --verbose`,
-		{
-			cwd: './node_modules/keytar/',
-			stdout: 'inherit'
-		}
-	)))
+	await mainBundle.write({ sourcemap: true, format: "esm", dir: outDir })
+	await fs.promises.copyFile(path.join(dirname, "src/common/desktop/preload.js"), path.join(outDir, "preload.js"))
+	await fs.promises.copyFile(path.join(dirname, "src/common/desktop/preload-webdialog.js"), path.join(outDir, "preload-webdialog.js"))
 }
 
 /**
@@ -172,9 +170,10 @@ async function maybeGetKeytar(targets, napiVersion = 3) {
  */
 async function getMapirs(distDir) {
 	const dllName = "mapirs.dll"
-	const dllSrc = process.platform === "win32"
-		? path.join('../mapirs/target/x86_64-pc-windows-msvc/release', dllName)
-		: path.join('../mapirs/target/x86_64-pc-windows-gnu/release', dllName)
+	const dllSrc =
+		process.platform === "win32"
+			? path.join("../mapirs/target/x86_64-pc-windows-msvc/release", dllName)
+			: path.join("../mapirs/target/x86_64-pc-windows-gnu/release", dllName)
 	const dllTrg = path.join(distDir, dllName)
 	console.log("trying to copy", dllName, "from", dllSrc, "to", dllTrg)
 	try {
@@ -192,20 +191,31 @@ async function getMapirs(distDir) {
  * @returns {Promise<void>}
  */
 async function downloadLatestMapirs(dllName, dllTrg) {
-	const {Octokit} = await import("@octokit/rest")
-	const octokit = new Octokit();
-	const opts = {
-		owner: "tutao",
-		repo: "mapirs"
-	}
-	const res = await octokit.request('GET /repos/{owner}/{repo}/releases/latest', opts)
-	const asset_id = res.data.assets.find(a => a.name.startsWith(dllName)).id
-	const asset = await octokit.repos.getReleaseAsset(Object.assign(opts, {
-		asset_id,
-		headers: {
-			"Accept": "application/octet-stream"
+	try {
+		const { Octokit } = await import("@octokit/rest")
+		const octokit = new Octokit()
+		const opts = {
+			owner: "tutao",
+			repo: "mapirs",
 		}
-	}))
-
-	await fs.promises.writeFile(dllTrg, Buffer.from(asset.data))
+		console.log("getting latest mapirs release")
+		const res = await octokit.request("GET /repos/{owner}/{repo}/releases/latest", opts)
+		console.log("latest mapirs release", res.url)
+		const asset_id = res.data.assets.find((a) => a.name.startsWith(dllName)).id
+		console.log("Downloading mapirs asset", asset_id)
+		const assetResponse = await octokit.repos.getReleaseAsset({
+			...opts,
+			asset_id,
+			headers: {
+				Accept: "application/octet-stream",
+			},
+		})
+		console.log("Writing mapirs asset")
+		// @ts-ignore not clear how to check for response status so that ts is happy
+		await fs.promises.writeFile(dllTrg, Buffer.from(assetResponse.data))
+		console.log("Mapirs downloaded")
+	} catch (e) {
+		console.error("Failed to download mapirs!", e)
+		throw e
+	}
 }

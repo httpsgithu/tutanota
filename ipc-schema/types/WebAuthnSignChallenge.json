@@ -1,0 +1,9 @@
+{
+	"name": "WebAuthnSignChallenge",
+	"type": "struct",
+	"fields": {
+		"challenge": "bytes",
+		"domain": "string",
+		"keys": "List<WebauthnKeyDescriptor>"
+	}
+}

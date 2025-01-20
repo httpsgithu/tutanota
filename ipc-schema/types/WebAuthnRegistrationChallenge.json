@@ -1,0 +1,11 @@
+{
+	"name": "WebAuthnRegistrationChallenge",
+	"type": "struct",
+	"fields": {
+		"challenge": "bytes",
+		"userId": "string",
+		"name": "string",
+		"displayName": "string",
+		"domain": "string"
+	}
+}

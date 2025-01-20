@@ -1,0 +1,10 @@
+{
+	"name": "WebAuthnRegistrationResult",
+	"type": "struct",
+	"doc": "Result of Webauthn registration with hardware key.",
+	"fields": {
+		"rpId": "string",
+		"rawId": "bytes",
+		"attestationObject": "bytes"
+	}
+}

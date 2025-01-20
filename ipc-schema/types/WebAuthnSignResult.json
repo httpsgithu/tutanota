@@ -1,0 +1,11 @@
+{
+	"name": "WebAuthnSignResult",
+	"type": "struct",
+	"doc": "Result of Webauthn authentication with hardware key.",
+	"fields": {
+		"rawId": "bytes",
+		"clientDataJSON": "bytes",
+		"signature": "bytes",
+		"authenticatorData": "bytes"
+	}
+}

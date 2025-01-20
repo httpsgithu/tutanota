@@ -1,133 +1,156 @@
-import {rollupDebugPlugins, writeNollupBundle} from "../buildSrc/RollupDebugConfig.js"
-import nollup from "nollup"
 import * as env from "../buildSrc/env.js"
-import {promises as fs} from "fs"
-import path, {dirname} from "path"
-import {renderHtml} from "../buildSrc/LaunchHtml.js"
-import {fileURLToPath} from "url"
-import nodeResolve from "@rollup/plugin-node-resolve"
+import { preludeEnvPlugin } from "../buildSrc/env.js"
+import fs from "fs-extra"
+import path, { dirname } from "node:path"
+import { renderHtml } from "../buildSrc/LaunchHtml.js"
+import { getTutanotaAppVersion, runStep, writeFile } from "../buildSrc/buildUtils.js"
+import { buildPackages } from "../buildSrc/packageBuilderFunctions.js"
+import { domainConfigs } from "../buildSrc/DomainConfigs.js"
+import { sh } from "../buildSrc/sh.js"
+import { rolldown } from "rolldown"
+import { resolveLibs } from "../buildSrc/RollupConfig.js"
+import { nodeGypPlugin } from "../buildSrc/nodeGypPlugin.js"
+import { fileURLToPath } from "node:url"
 
-const root = dirname(fileURLToPath(import.meta.url))
+const currentDir = dirname(fileURLToPath(import.meta.url))
+const projectRoot = path.resolve(path.join(currentDir, ".."))
 
-export async function build(buildOptions, serverOptions, log) {
-	log("Building tests")
+export async function runTestBuild({ clean, fast = false }) {
+	if (clean) {
+		await runStep("Clean", async () => {
+			await fs.emptyDir("build")
+		})
+	}
 
-	const pjPath = path.join(root, "..", "package.json")
-	await fs.mkdir(buildDir(), {recursive: true})
-	const {version} = JSON.parse(await fs.readFile(pjPath, "utf8"))
-	await fs.copyFile(pjPath, buildDir("package.json"))
-	const localEnv = env.create({staticUrl: "http://localhost:9000", version, mode: "Test", dist: false})
+	if (!fast) {
+		await runStep("Packages", async () => {
+			await buildPackages("..")
+		})
 
-	log("Bundling...")
-	const bundle = await nollup({
-		input: ["api/bootstrapTests-api.js", "client/bootstrapTests-client.js"],
-		plugins: [
-			envPlugin(localEnv),
-			resolveTestLibsPlugin(),
-			nodeResolve({preferBuiltins: true}),
-			...rollupDebugPlugins(".."),
-		],
+		await runStep("Types", async () => {
+			await sh`npx tsc --incremental true --noEmit true`
+		})
+	}
+
+	const version = await getTutanotaAppVersion()
+	const localEnv = env.create({ staticUrl: "http://localhost:9000", version, mode: "Test", dist: false, domainConfigs })
+
+	await runStep("Assets", async () => {
+		const pjPath = path.join("..", "package.json")
+		await fs.mkdir(inBuildDir(), { recursive: true })
+		await fs.copyFile(pjPath, inBuildDir("package.json"))
+		await createUnitTestHtml(localEnv)
 	})
-	return [
-		{
-			bundle,
-			async generate() {
-				await Promise.all([
-					createUnitTestHtml(false, "api", localEnv, log),
-					createUnitTestHtml(false, "client", localEnv, log)
-				])
-
-				const start = Date.now()
-				log("Generating...")
-				const result = await bundle.generate({sourcemap: false, dir: buildDir(), format: "esm", chunkFileNames: "[name].js"})
-				log("Generated in", Date.now() - start)
-
-				const writingStart = Date.now()
-				await writeNollupBundle(result, log, buildDir())
-				log("Wrote in ", Date.now() - writingStart)
+	await runStep("Rolldown", async () => {
+		const { rollupWasmLoader } = await import("@tutao/tuta-wasm-loader")
+		const bundle = await rolldown({
+			input: ["tests/testInBrowser.ts", "tests/testInNode.ts"],
+			platform: "neutral",
+			define: {
+				// See Env.ts for explanation
+				LOAD_ASSERTIONS: "false",
 			},
-		}
-	]
+
+			external: [
+				"electron",
+				// esbuild can't deal with node imports in ESM output at the moment
+				// see https://github.com/evanw/esbuild/pull/2067
+				"xhr2",
+				"express",
+				"server-destroy",
+				"body-parser",
+				"jsdom",
+				/node:.*/,
+				"http",
+				"stream",
+				"fs",
+				"assert",
+				"net",
+				"diagnostics_channel",
+				"zlib",
+				"console",
+				"async_hooks",
+				"util/types",
+				"perf_hooks",
+				"worker_threads",
+				"path",
+				"tls",
+				"buffer",
+				"events",
+				"util",
+				"string_decoder",
+			],
+			plugins: [
+				preludeEnvPlugin(localEnv),
+				resolveLibs(".."),
+				nodeGypPlugin({
+					rootDir: projectRoot,
+					platform: process.platform,
+					architecture: process.arch,
+					nodeModule: "better-sqlite3",
+					environment: "node",
+				}),
+				rollupWasmLoader({
+					output: `${process.cwd()}/build/wasm`,
+					webassemblyLibraries: [
+						{
+							name: "liboqs.wasm",
+							command: "make -f Makefile_liboqs build",
+							workingDir: `${process.cwd()}/../libs/webassembly/`,
+							outputPath: `${process.cwd()}/build/wasm/liboqs.wasm`,
+							fallback: {
+								command: "make -f Makefile_liboqs fallback",
+								workingDir: `${process.cwd()}/../libs/webassembly/`,
+								outputPath: `${process.cwd()}/build/wasm/liboqs.js`,
+							},
+						},
+						{
+							name: "argon2.wasm",
+							command: "make -f Makefile_argon2 build",
+							workingDir: `${process.cwd()}/../libs/webassembly/`,
+							outputPath: `${process.cwd()}/build/wasm/argon2.wasm`,
+							fallback: {
+								command: "make -f Makefile_argon2 fallback",
+								workingDir: `${process.cwd()}/../libs/webassembly/`,
+								outputPath: `${process.cwd()}/build/wasm/argon2.js`,
+							},
+						},
+					],
+				}),
+			],
+			resolve: {
+				mainFields: ["module", "main"],
+				alias: {
+					// Take browser testdouble without funny require() magic
+					testdouble: path.resolve("../node_modules/testdouble/dist/testdouble.js"),
+				},
+			},
+			onwarn: (warning, defaultHandler) => {
+				if (warning.code !== "EVAL") {
+					defaultHandler(warning)
+				}
+			},
+			// overwrite the files rather than keeping all versions in the build folder
+			chunkFileNames: "[name]-chunk.js",
+		})
+		await bundle.write({
+			dir: "./build",
+			format: "esm",
+			sourcemap: true,
+		})
+	})
 }
 
-// We use this homebrew plugin so that libs are copies to _virtual folder and *not* build/node_modules
-// (which would be the case with preserve_modules).
-// Files in build/node_modules are treated as separate libraries and ES mode resets back to commonjs.
-function resolveTestLibsPlugin() {
-	return {
-		name: "resolve-test-libs",
-		resolveId(source, importer) {
-			switch (source) {
-				case "mithril/test-utils/browserMock":
-					// This one is *not* a module, just a script so we need to rewrite import path.
-					// nollup only rewrites absolute paths so resolve path first.
-					return path.resolve("../node_modules/mithril/test-utils/browserMock.js")
-				case "ospec":
-					return ("../node_modules/ospec/ospec.js")
-				case "crypto":
-				case "xhr2":
-				case "express":
-				case "server-destroy":
-				case "body-parser":
-				case "mockery":
-				case "path":
-				case "url":
-				case "util":
-				case "node-forge":
-				case "os":
-				case "electron-updater":
-				case "child_process":
-				case "querystring":
-				case "events":
-				case "fs":
-				case "buffer":
-				case "winreg":
-					return false
-				case "electron":
-					throw new Error(`electron is imported by ${importer}, don't do it in tests`)
-			}
-		},
-	}
-}
+async function createUnitTestHtml(localEnv) {
+	const imports = [{ src: `./testInBrowser.js`, type: "module" }]
+	const htmlFilePath = inBuildDir("test.html")
 
-
-/**
- * Simple plugin for virtual module "@tutanota/env" which resolves to the {@param env}.
- * see https://rollupjs.org/guide/en/#a-simple-example
- */
-function envPlugin(env) {
-	return {
-		name: "tutanota-env",
-		resolveId(source) {
-			if (source === "@tutanota/env") return source
-		},
-		load(id) {
-			if (id === "@tutanota/env") return `export default ${JSON.stringify(env)}`
-		},
-	}
-}
-
-async function createUnitTestHtml(watch, project, localEnv, log) {
-	const imports = [{src: `test-${project}.js`, type: "module"}]
-
-
-	const template = `import('./bootstrapTests-${project}.js')`
-	const targetFile = buildDir(`test-${project}.html`)
-	log(`Generating browser tests for ${project} at "${targetFile}"`)
-	await _writeFile(buildDir(`test-${project}.js`), [
-		`window.whitelabelCustomizations = null`,
-		`window.env = ${JSON.stringify(localEnv, null, 2)}`,
-		watch ? "new WebSocket('ws://localhost:8080').addEventListener('message', (e) => window.hotReload())" : "",
-	].join("\n") + "\n" + template)
+	console.log(`Generating browser tests at "${htmlFilePath}"`)
 
 	const html = await renderHtml(imports, localEnv)
-	await _writeFile(targetFile, html)
+	await writeFile(htmlFilePath, html)
 }
 
-function _writeFile(targetFile, content) {
-	return fs.mkdir(path.dirname(targetFile), {recursive: true}).then(() => fs.writeFile(targetFile, content, 'utf-8'))
-}
-
-function buildDir(...files) {
-	return path.join(root, "build", ...files)
+function inBuildDir(...files) {
+	return path.join("build", ...files)
 }

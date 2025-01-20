@@ -1,0 +1,36 @@
+{
+	"name": "ThemeFacade",
+	"type": "facade",
+	"senders": ["web"],
+	"receivers": ["ios", "desktop", "android"],
+	"methods": {
+		"getThemes": {
+			"arg": [],
+			"ret": "List<Map<string, string>>"
+		},
+		"setThemes": {
+			"arg": [
+				{
+					"themes": "List<Map<string, string>>"
+				}
+			],
+			"ret": "void"
+		},
+		"getThemePreference": {
+			"arg": [],
+			"ret": "string?"
+		},
+		"setThemePreference": {
+			"arg": [
+				{
+					"themePreference": "string"
+				}
+			],
+			"ret": "void"
+		},
+		"prefersDark": {
+			"arg": [],
+			"ret": "boolean"
+		}
+	}
+}

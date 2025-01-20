@@ -1,53 +1,86 @@
-import child_process, {spawn} from "child_process"
-import {BuildServerClient} from "@tutao/tutanota-build-server"
-import flow from "flow-bin"
-import path from "path"
+import { runTestBuild } from "./TestBuilder.js"
+import { Option, program } from "commander"
 
-run()
-
-async function run() {
-	let project
-	if (process.argv.indexOf("api") !== -1) {
-		project = "api"
-	} else if (process.argv.indexOf("client") !== -1) {
-		project = "client"
-	} else {
-		console.error("must provide 'api' or 'client' to run the tests")
-		process.exit(1)
-	}
-	const clean = process.argv.includes("-c")
-
-
-	spawn(flow, ["--quiet"], {stdio: "inherit"})
-
-	try {
-		const buildServerClient = new BuildServerClient("test")
-		await buildServerClient.buildWithServer({
-			forceRestart: clean,
-			builderPath: path.resolve("TestBuilder.js"),
-			watchFolders: [path.resolve("api"), path.resolve("client"), path.resolve("../src")],
-			buildOpts: {}
-		})
+await program
+	.addOption(new Option("-i, --integration", "Include integration tests (requires local tutadb server)"))
+	.addOption(new Option("-c, --clean"))
+	.addOption(new Option("-f, --filter <query>", "Filter for tests and specs to run only matching tests"))
+	.addOption(new Option("--no-run", "Do not run the tests in node"))
+	.addOption(new Option("-br, --browser", "Start the web server and run the tests in browser").default(false))
+	.addOption(new Option("--browser-cmd <path>", "Command used to run the browser").default("xdg-open"))
+	.action(async ({ clean, integration, filter, run, browser, browserCmd }) => {
+		await runTestBuild({ clean })
 		console.log("build finished!")
-		const code = await runTest(project)
-		process.exit(code)
-	} catch (e) {
-		console.error("Build failed", e)
-		process.exit(1)
-	}
-}
 
-function runTest(project) {
-	return new Promise((resolve) => {
-		let testRunner = child_process.fork(`./build/bootstrapTests-${project}.js`)
-		testRunner.on('exit', (code) => {
-			resolve(code)
-		})
+		let nodeOk
+		if (run) {
+			nodeOk = await runTestsInNode({ integration, filter })
+		} else {
+			nodeOk = true
+		}
+
+		let browserOk
+		if (browser) {
+			browserOk = await runTestsInBrowser({ filter, browserCmd })
+		} else {
+			browserOk = true
+		}
+
+		if (browserOk && nodeOk) {
+			process.exit(0)
+		} else {
+			process.exit(1)
+		}
 	})
+	.parseAsync(process.argv)
+
+function resultIsOk(result) {
+	return result.failingTests.length === 0
 }
 
-async function directoryExists(filePath) {
-	return fs.stat(filePath)
-	         .then(stats => stats.isDirectory())
-	         .catch(() => false)
+/** Function which runs tests and exits with the exit code afterwards. */
+async function runTestsInBrowser({ filter, browserCmd }) {
+	const { default: express } = await import("express")
+	const app = express()
+	app.use(express.static("build"))
+	// deafault limit (100Kb) is way too small
+	app.use(express.json({ limit: "10Mb" }))
+
+	const { spawn } = await import("node:child_process")
+
+	const server = await new Promise((resolve) => {
+		const s = app.listen(0, () => resolve(s))
+	})
+
+	const result = await new Promise((resolve) => {
+		app.post("/status", (req, res) => {
+			console.log("browser: ", req.body)
+			res.status(200).send()
+		})
+		app.post("/result", (req, res) => {
+			resolve(req.body)
+			res.status(200).send()
+		})
+
+		const url = new URL(`http://localhost:${server.address().port}/test.html`)
+		if (filter) {
+			url.searchParams.set("filter", filter)
+		}
+
+		const command = `${browserCmd} '${url.toString()}'`
+		console.log(`> ${command}`)
+		spawn(command, { stdio: "inherit", shell: true })
+	})
+
+	const { default: o } = await import("@tutao/otest")
+	console.log("\n--------------- BROWSER ---------------")
+	o.printReport(result)
+	return resultIsOk(result)
+}
+
+async function runTestsInNode({ integration, filter }) {
+	const { run } = await import("./build/testInNode.js")
+	console.log("\n--------------- NODE ---------------")
+	const result = await run({ integration, filter })
+	return resultIsOk(result)
 }

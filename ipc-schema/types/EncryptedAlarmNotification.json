@@ -1,0 +1,8 @@
+{
+	"name": "EncryptedAlarmNotification",
+	"type": "typeref",
+	"location": {
+		"typescript": "../src/common/native/common/EncryptedAlarmNotification.js",
+		"kotlin": "de.tutao.tutashared.alarms.EncryptedAlarmNotification"
+	}
+}

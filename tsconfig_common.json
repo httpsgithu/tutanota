@@ -1,0 +1,31 @@
+{
+	"compilerOptions": {
+		"lib": ["es2022", "webworker", "dom"],
+		"allowJs": true,
+		"checkJs": false,
+		"target": "es2022",
+		"module": "es2022",
+		// We need either node16/nodenext or bundler to support export maps from modules but most of our imports don't
+		// contain the file extensions, so we can't use node16 as is. Bundler allows extensionless paths.
+		"moduleResolution": "bundler",
+		"skipLibCheck": true,
+		"declaration": true,
+		"noEmitOnError": true,
+		"noErrorTruncation": true,
+		"allowSyntheticDefaultImports": true,
+		"noImplicitAny": true,
+		"noImplicitThis": true,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false,
+		"esModuleInterop": true,
+		"strict": false,
+		"alwaysStrict": true,
+		"strictBindCallApply": true,
+		"strictFunctionTypes": false,
+		"strictPropertyInitialization": true,
+		"noStrictGenericChecks": false,
+		"strictNullChecks": true,
+		"useUnknownInCatchVariables": false,
+		"types": ["node"]
+	}
+}

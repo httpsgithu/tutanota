@@ -1,0 +1,27 @@
+{
+	"name": "@tutao/licc",
+	"version": "262.250120.0",
+	"bin": {
+		"licc": "dist/cli.js"
+	},
+	"description": "little interface compiler",
+	"main": "index.js",
+	"type": "module",
+	"scripts": {
+		"build": "npx tsc -b",
+		"test": "rm -rf ./test/build && tsc -b test && cd test/build && node test/Suite.js",
+		"preinstall": "node preinstall.js"
+	},
+	"author": "",
+	"license": "GPL-3.0",
+	"dependencies": {
+		"commander": "9.3.0",
+		"json5": "^2.2.1",
+		"zx": "6.1.0"
+	},
+	"devDependencies": {
+		"typescript": "5.3.3",
+		"@tutao/tutanota-test-utils": "262.250120.0",
+		"@tutao/otest": "262.250120.0"
+	}
+}

@@ -1,0 +1,110 @@
+{
+	"name": "NativePushFacade",
+	"type": "facade",
+	"senders": ["web"],
+	"receivers": ["android", "desktop", "ios"],
+	"doc": "Push notifications and alarms operations",
+	"methods": {
+		"getPushIdentifier": {
+			"arg": [],
+			"ret": "string?"
+		},
+		"storePushIdentifierLocally": {
+			"arg": [
+				{
+					"identifier": "string"
+				},
+				{
+					"userId": "string"
+				},
+				{
+					"sseOrigin": "string"
+				},
+				{
+					"pushIdentifierId": "string"
+				},
+				{
+					"pushIdentifierSessionKey": "bytes"
+				}
+			],
+			"ret": "void"
+		},
+		"removeUser": {
+			"arg": [
+				{
+					"userId": "string"
+				}
+			],
+			"ret": "void"
+		},
+		"initPushNotifications": {
+			"doc": "Called at some point after login to initialize push notifications.",
+			"arg": [],
+			"ret": "void"
+		},
+		"closePushNotifications": {
+			"arg": [
+				{
+					"addressesArray": "List<string>"
+				}
+			],
+			"ret": "void"
+		},
+		"scheduleAlarms": {
+			"arg": [
+				{
+					"alarms": "List<EncryptedAlarmNotification>"
+				}
+			],
+			"ret": "void"
+		},
+		"invalidateAlarmsForUser": {
+			"arg": [
+				{
+					"userId": "string"
+				}
+			],
+			"ret": "void",
+			"doc": "Unschedule and remove alarms belonging to a specific user from the persistent storage"
+		},
+		"setExtendedNotificationConfig": {
+			"arg": [
+				{
+					"userId": "string"
+				},
+				{
+					"mode": "ExtendedNotificationMode"
+				}
+			],
+			"ret": "void"
+		},
+		"getExtendedNotificationConfig": {
+			"arg": [
+				{
+					"userId": "string"
+				}
+			],
+			"ret": "ExtendedNotificationMode"
+		},
+		"setReceiveCalendarNotificationConfig": {
+			"arg": [
+				{
+					"pushIdentifier": "string"
+				},
+				{
+					"value": "boolean"
+				}
+			],
+			"ret": "void",
+			"doc": "Set user preference for receiving calendar notifications in the mail app using pushIdentifier since it represents the device of a user."
+		},
+		"getReceiveCalendarNotificationConfig": {
+			"arg": [
+				{
+					"pushIdentifier": "string"
+				}
+			],
+			"ret": "boolean"
+		}
+	}
+}
